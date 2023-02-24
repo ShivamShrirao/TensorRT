@@ -223,8 +223,8 @@ class DemoDiffusion:
                                     export_params=True,
                                     opset_version=onnx_opset,
                                     do_constant_folding=True,
-                                    input_names = obj.get_input_names(),
-                                    output_names = obj.get_output_names(),
+                                    input_names=obj.get_input_names(),
+                                    output_names=obj.get_output_names(),
                                     dynamic_axes=obj.get_dynamic_axes(),
                             )
                         
@@ -256,7 +256,11 @@ class DemoDiffusion:
     def loadModules(
         self,
     ):
-        self.tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
+        model_opts = {'revision': 'fp16', 'torch_dtype': torch.float16} if self.denoising_fp16 else {}
+        self.tokenizer = CLIPTokenizer.from_pretrained("stabilityai/stable-diffusion-2-1-base",
+            subfolder="tokenizer",
+            use_auth_token=self.hf_token,
+            **model_opts)
         self.scheduler.set_timesteps(self.denoising_steps)
         # Pre-compute latent input scales and linear multistep coefficients
         self.scheduler.configure()

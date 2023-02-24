@@ -42,6 +42,7 @@ cd plugin
 make -j$(nproc)
 
 export PLUGIN_LIBS="$TRT_OSSPATH/build/out/libnvinfer_plugin.so"
+export CUDA_MODULE_LOADING="LAZY"
 ```
 
 ### Install required packages
@@ -90,7 +91,7 @@ export HF_TOKEN=<your access token>
 ### Generate an image guided by a single text prompt
 
 ```bash
-LD_PRELOAD=${PLUGIN_LIBS} python3 demo-diffusion.py "a beautiful photograph of Mt. Fuji during cherry blossom" --hf-token=$HF_TOKEN -v
+LD_PRELOAD=${PLUGIN_LIBS} python3 demo-diffusion.py --build-dynamic-shape --build-preview-features "a beautiful photograph of Mt. Fuji during cherry blossom" --hf-token=$HF_TOKEN -v
 ```
 
 # Restrictions

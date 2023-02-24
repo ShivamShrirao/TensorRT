@@ -566,18 +566,19 @@ class Optimizer():
                 o.o().o().o().op == "MatMul" and \
                 o.o().o().o().i(0).op == "Softmax" and \
                 o.o().o().o().i(1).op == "Reshape" and \
-                o.o().o().o().i(0).i().op == "Mul" and \
-                o.o().o().o().i(0).i().i().op == "MatMul" and \
-                o.o().o().o().i(0).i().i().i(0).op == "Reshape" and \
-                o.o().o().o().i(0).i().i().i(1).op == "Transpose" and \
-                o.o().o().o().i(0).i().i().i(1).i().op == "Reshape" and \
-                o.o().o().o().i(0).i().i().i(1).i().i().op == "Transpose" and \
-                o.o().o().o().i(0).i().i().i(1).i().i().i().op == "Reshape" and \
-                o.o().o().o().i(0).i().i().i(1).i().i().i().i().op == "MatMul" and \
-                node.name != o.o().o().o().i(0).i().i().i(1).i().i().i().i().name:
+                o.o().o().o().i(0).i().op == "Add" and \
+                o.o().o().o().i(0).i().i().op == "Mul" and \
+                o.o().o().o().i(0).i().i().i().op == "MatMul" and \
+                o.o().o().o().i(0).i().i().i().i(0).op == "Reshape" and \
+                o.o().o().o().i(0).i().i().i().i(1).op == "Transpose" and \
+                o.o().o().o().i(0).i().i().i().i(1).i().op == "Reshape" and \
+                o.o().o().o().i(0).i().i().i().i(1).i().i().op == "Transpose" and \
+                o.o().o().o().i(0).i().i().i().i(1).i().i().i().op == "Reshape" and \
+                o.o().o().o().i(0).i().i().i().i(1).i().i().i().i().op == "MatMul" and \
+                node.name != o.o().o().o().i(0).i().i().i().i(1).i().i().i().i().name:
                 # "len(node.outputs) == 1" to make sure we are not in the already fused node
-                node_q = o.o().o().o().i(0).i().i().i(0).i().i().i()
-                node_k = o.o().o().o().i(0).i().i().i(1).i().i().i().i()
+                node_q = o.o().o().o().i(0).i().i().i().i(0).i().i().i()
+                node_k = o.o().o().o().i(0).i().i().i().i(1).i().i().i().i()
                 node_v = node
                 final_tranpose = o.o().o().o().o(num_dynamic_q).o()
                 # Sanity check to make sure that the graph looks like expected
@@ -585,7 +586,7 @@ class Optimizer():
                     return True, num_dynamic_q, num_dynamic_kv, node_q, node_k, node_v, final_tranpose
         return False, 0, 0, None, None, None, None
 
-    def fuse_kv_insert_fmhca(self, heads, mhca_index, sm):
+    def fuse_kv_insert_fmhca(self, dim_heads, mhca_index, sm):
         nodes = self.graph.nodes
         # Iterate over graph and search for MHCA pattern
         for idx, _ in enumerate(nodes):
@@ -599,6 +600,8 @@ class Optimizer():
             if detected:
                 assert num_dynamic_q == 0 or num_dynamic_q == num_dynamic_kv + 1
                 # Skip the FMHCA plugin for SM75 except for when the dim per head is 40.
+                weights_k = node_k.inputs[1].values
+                heads = weights_k.shape[1] // dim_heads
                 if sm == 75 and node_q.inputs[1].shape[1] // heads == 160:
                     continue
                 # Fuse K and V GEMMS
@@ -608,7 +611,7 @@ class Optimizer():
                 return True
         return False
 
-    def fuse_qkv_insert_fmha(self, heads, mha_index):
+    def fuse_qkv_insert_fmha(self, dim_heads, mha_index):
         nodes = self.graph.nodes
         # Iterate over graph and search for MHA pattern
         for idx, _ in enumerate(nodes):
@@ -621,6 +624,9 @@ class Optimizer():
                 self.mha_mhca_detected(nodes[idx], mha=True)
             if detected:
                 assert num_dynamic_q == num_dynamic_kv
+                weights_k = node_k.inputs[1].values
+                heads = weights_k.shape[1] // dim_heads
+                print(heads)
                 # Fuse Q, K and V GEMMS
                 node_qkv = self.fuse_qkv(node_q, node_k, node_v, mha_index, heads, num_dynamic_kv)
                 # Insert fMHA plugin
@@ -628,15 +634,15 @@ class Optimizer():
                 return True
         return False
 
-    def insert_fmhca_plugin(self, num_heads, sm):
+    def insert_fmhca_plugin(self, dim_heads, sm):
         mhca_index = 0
-        while self.fuse_kv_insert_fmhca(num_heads, mhca_index, sm):
+        while self.fuse_kv_insert_fmhca(dim_heads, mhca_index, sm):
             mhca_index += 1
         return mhca_index
 
-    def insert_fmha_plugin(self, num_heads):
+    def insert_fmha_plugin(self, dim_heads):
         mha_index = 0
-        while self.fuse_qkv_insert_fmha(num_heads, mha_index):
+        while self.fuse_qkv_insert_fmha(dim_heads, mha_index):
             mha_index += 1
         return mha_index
 
@@ -645,8 +651,8 @@ class BaseModel():
         self,
         hf_token,
         text_maxlen=77,
-        embedding_dim=768,
-        fp16=False,
+        embedding_dim=1024,
+        fp16=True,
         device='cuda',
         verbose=True,
         max_batch_size=16
@@ -710,7 +716,11 @@ class BaseModel():
 
 class CLIP(BaseModel):
     def get_model(self):
-        return CLIPTextModel.from_pretrained("openai/clip-vit-large-patch14").to(self.device)
+        model_opts = {'revision': 'fp16', 'torch_dtype': torch.float16} if self.fp16 else {}
+        return CLIPTextModel.from_pretrained("stabilityai/stable-diffusion-2-1-base",
+            subfolder="text_encoder",
+            use_auth_token=self.hf_token,
+            **model_opts).to(self.device)
 
     def get_input_names(self):
         return ['input_ids']
@@ -776,7 +786,7 @@ class CLIP(BaseModel):
 class UNet(BaseModel):
     def get_model(self):
         model_opts = {'revision': 'fp16', 'torch_dtype': torch.float16} if self.fp16 else {}
-        return UNet2DConditionModel.from_pretrained("CompVis/stable-diffusion-v1-4",
+        return UNet2DConditionModel.from_pretrained("stabilityai/stable-diffusion-2-1-base",
             subfolder="unet",
             use_auth_token=self.hf_token,
             **model_opts).to(self.device)
@@ -879,15 +889,15 @@ class UNet(BaseModel):
         opt.infer_shapes()
         opt.info('UNet: shape inference')
 
-        num_heads = 8
+        dim_heads = 64
         if bMHAPlugin and not bDisablePlugins:
-            num_fmha_inserted = opt.insert_fmha_plugin(num_heads)
+            num_fmha_inserted = opt.insert_fmha_plugin(dim_heads)
             opt.info('UNet: inserted '+str(num_fmha_inserted)+' fMHA plugins')
 
         if bMHCAPlugin and not bDisablePlugins:
             props = cudart.cudaGetDeviceProperties(0)[1]
             sm = props.major * 10 + props.minor
-            num_fmhca_inserted = opt.insert_fmhca_plugin(num_heads, sm)
+            num_fmhca_inserted = opt.insert_fmhca_plugin(dim_heads, sm)
             opt.info('UNet: inserted '+str(num_fmhca_inserted)+' fMHCA plugins')
 
         if bGroupNormPlugin and not bDisablePlugins:
@@ -912,9 +922,11 @@ class UNet(BaseModel):
 
 class VAE(BaseModel):
     def get_model(self):
-        vae = AutoencoderKL.from_pretrained("CompVis/stable-diffusion-v1-4",
+        model_opts = {'revision': 'fp16', 'torch_dtype': torch.float16} if self.fp16 else {}
+        vae = AutoencoderKL.from_pretrained("stabilityai/stable-diffusion-2-1-base",
             subfolder="vae",
-            use_auth_token=self.hf_token).to(self.device)
+            use_auth_token=self.hf_token,
+            **model_opts).to(self.device)
         vae.forward = vae.decode
         return vae
 

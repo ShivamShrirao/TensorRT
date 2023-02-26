@@ -16,19 +16,24 @@
 #
 
 import argparse
-from cuda import cudart
-from models import CLIP, UNet, VAE
+import gc
+import os
+import time
+
 import numpy as np
 import nvtx
-import os
 import onnx
-from polygraphy import cuda
-import time
-import torch
-from transformers import CLIPTokenizer
 import tensorrt as trt
-from utilities import Engine, DPMScheduler, LMSDiscreteScheduler, save_image, TRT_LOGGER
-import gc
+import torch
+from cuda import cudart
+from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_inpaint import \
+    prepare_mask_and_masked_image
+from models import CLIP, UNet, VAEDecode, VAEEncode
+from polygraphy import cuda
+from transformers import CLIPTokenizer
+from utilities import (TRT_LOGGER, DPMScheduler, Engine, LMSDiscreteScheduler,
+                       save_image)
+
 
 def parseArgs():
     parser = argparse.ArgumentParser(description="Options for Stable Diffusion Demo")
@@ -36,12 +41,13 @@ def parseArgs():
     parser.add_argument('prompt', nargs = '*', help="Text prompt(s) to guide image generation")
     parser.add_argument('--negative-prompt', nargs = '*', default=[''], help="The negative prompt(s) to guide the image generation.")
     parser.add_argument('--repeat-prompt', type=int, default=1, choices=[1, 2, 4, 8, 16], help="Number of times to repeat the prompt (batch size multiplier)")
-    parser.add_argument('--height', type=int, default=512, help="Height of image to generate (must be multiple of 8)")
-    parser.add_argument('--width', type=int, default=512, help="Height of image to generate (must be multiple of 8)")
+    parser.add_argument('--height', type=int, default=768, help="Height of image to generate (must be multiple of 8)")
+    parser.add_argument('--width', type=int, default=768, help="Height of image to generate (must be multiple of 8)")
     parser.add_argument('--num-images', type=int, default=1, help="Number of images to generate per prompt")
-    parser.add_argument('--denoising-steps', type=int, default=50, help="Number of denoising steps")
+    parser.add_argument('--denoising-steps', type=int, default=24, help="Number of denoising steps")
     parser.add_argument('--denoising-prec', type=str, default='fp16', choices=['fp32', 'fp16'], help="Denoiser model precision")
-    parser.add_argument('--scheduler', type=str, default="LMSD", choices=["LMSD", "DPM"], help="Scheduler for diffusion process")
+    parser.add_argument('--scheduler', type=str, default="DPM", choices=["LMSD", "DPM"], help="Scheduler for diffusion process")
+    parser.add_argument('--model_name_or_path', type=str, default="stabilityai/stable-diffusion-2-1-base", help="HuggingFace model name or path to pretrained model")
 
     # ONNX export
     parser.add_argument('--onnx-opset', type=int, default=16, choices=range(7,18), help="Select ONNX opset version to target for exported models")
@@ -82,7 +88,8 @@ class DemoDiffusion:
         hf_token=None,
         verbose=False,
         nvtx_profile=False,
-        max_batch_size=16
+        max_batch_size=16,
+        model_name_or_path="stabilityai/stable-diffusion-2-1-base"
     ):
         """
         Initializes the Diffusion pipeline.
@@ -118,13 +125,14 @@ class DemoDiffusion:
         assert guidance_scale > 1.0
         self.guidance_scale = guidance_scale
 
+        self.model_name_or_path = model_name_or_path
         self.output_dir = output_dir
         self.hf_token = hf_token
         self.device = device
         self.verbose = verbose
         self.nvtx_profile = nvtx_profile
 
-        # A scheduler to be used in combination with unet to denoise the encoded image latens.
+        # A scheduler to be used in combination with unet to denoise the encoded image latents.
         # This demo uses an adaptation of LMSDiscreteScheduler or DPMScheduler:
         sched_opts = {'num_train_timesteps': 1000, 'beta_start': 0.00085, 'beta_end': 0.012}
         if scheduler == "DPM":
@@ -138,9 +146,10 @@ class DemoDiffusion:
 
         self.unet_model_key = 'unet_fp16' if denoising_fp16 else 'unet'
         self.models = {
-            'clip': CLIP(hf_token=hf_token, device=device, verbose=verbose, max_batch_size=max_batch_size),
-            self.unet_model_key: UNet(hf_token=hf_token, fp16=denoising_fp16, device=device, verbose=verbose, max_batch_size=max_batch_size),
-            'vae': VAE(hf_token=hf_token, device=device, verbose=verbose, max_batch_size=max_batch_size)
+            'clip': CLIP(hf_token=hf_token, device=device, verbose=verbose, max_batch_size=max_batch_size, model_name_or_path=model_name_or_path),
+            self.unet_model_key: UNet(hf_token=hf_token, fp16=denoising_fp16, device=device, verbose=verbose, max_batch_size=max_batch_size, model_name_or_path=model_name_or_path),
+            'vae_decode': VAEDecode(hf_token=hf_token, device=device, verbose=verbose, max_batch_size=max_batch_size, model_name_or_path=model_name_or_path),
+            'vae_encode': VAEEncode(hf_token=hf_token, device=device, verbose=verbose, max_batch_size=max_batch_size, model_name_or_path=model_name_or_path)
         }
 
         self.engine = {}
@@ -257,7 +266,7 @@ class DemoDiffusion:
         self,
     ):
         model_opts = {'revision': 'fp16', 'torch_dtype': torch.float16} if self.denoising_fp16 else {}
-        self.tokenizer = CLIPTokenizer.from_pretrained("stabilityai/stable-diffusion-2-1-base",
+        self.tokenizer = CLIPTokenizer.from_pretrained(self.model_name_or_path,
             subfolder="tokenizer",
             use_auth_token=self.hf_token,
             **model_opts)
@@ -269,10 +278,51 @@ class DemoDiffusion:
         engine = self.engine[model_name]
         return engine.infer(feed_dict, self.stream)
 
+    def prepare_mask_latents(
+        self, mask, masked_image, pose_inputs, batch_size, height, width, dtype, device, generator
+    ):
+        # resize the mask to latents shape as we concatenate the mask to the latents
+        # we do that before converting to dtype to avoid breaking in case we're using cpu_offload
+        # and half precision
+        mask = torch.nn.functional.interpolate(
+            mask, size=(height // self.vae_scale_factor, width // self.vae_scale_factor), mode='area'
+        )
+        pose_inputs = torch.nn.functional.interpolate(
+            pose_inputs, size=(height // self.vae_scale_factor, width // self.vae_scale_factor)
+        )
+
+        mask = mask.to(device=device, dtype=dtype)
+        pose_inputs = pose_inputs.to(device=device, dtype=dtype)
+        masked_image = masked_image.to(device=device, dtype=dtype)
+
+        # encode the mask image into latents space so we can concatenate it to the latents
+        sample_inp = cuda.DeviceView(ptr=masked_image.data_ptr(), shape=masked_image.shape, dtype=np.float32)
+        masked_image_latents = self.runEngine('vae_encode', {"images": sample_inp})['latent']
+        masked_image_latents = 0.18215 * masked_image_latents
+
+        # duplicate mask and masked_image_latents for each generation per prompt, using mps friendly method
+        if mask.shape[0] < batch_size:
+            mask = mask.repeat(batch_size // mask.shape[0], 1, 1, 1)
+        if masked_image_latents.shape[0] < batch_size:
+            masked_image_latents = masked_image_latents.repeat(batch_size // masked_image_latents.shape[0], 1, 1, 1)
+        if pose_inputs.shape[0] < batch_size:
+            pose_inputs = pose_inputs.repeat(batch_size // pose_inputs.shape[0], 1, 1, 1)
+
+        mask = torch.cat([mask] * 2)
+        pose_inputs = torch.cat([pose_inputs] * 2)
+        masked_image_latents = torch.cat([masked_image_latents] * 2)
+
+        # aligning device to prevent device errors when concating it with the latent model input
+        masked_image_latents = masked_image_latents.to(device=device, dtype=dtype)
+        return mask, masked_image_latents, pose_inputs
+
     def infer(
         self,
         prompt,
         negative_prompt,
+        image,
+        mask_image,
+        pose_inputs,
         image_height,
         image_width,
         warmup = False,
@@ -305,7 +355,7 @@ class DemoDiffusion:
 
         # Create profiling events
         events = {}
-        for stage in ['clip', 'denoise', 'vae']:
+        for stage in ['clip', 'denoise', 'vae_encode', 'vae_decode']:
             for marker in ['start', 'stop']:
                 events[stage+'-'+marker] = cudart.cudaEventCreate()[1]
 
@@ -320,8 +370,7 @@ class DemoDiffusion:
         # Run Stable Diffusion pipeline
         with torch.inference_mode(), torch.autocast("cuda"), trt.Runtime(TRT_LOGGER) as runtime:
             # latents need to be generated on the target device
-            unet_channels = 4 # unet.in_channels
-            latents_shape = (batch_size * self.num_images, unet_channels, latent_height, latent_width)
+            latents_shape = (batch_size * self.num_images, 4, latent_height, latent_width)
             latents_dtype = torch.float32 # text_embeddings.dtype
             latents = torch.randn(latents_shape, device=self.device, dtype=latents_dtype, generator=generator)
 
@@ -376,6 +425,26 @@ class DemoDiffusion:
             cudart.cudaEventRecord(events['clip-stop'], 0)
             if self.nvtx_profile:
                 nvtx.end_range(nvtx_clip)
+            
+            if self.nvtx_profile:
+                nvtx_vae_encode = nvtx.start_range(message='vae_encode', color='green')
+            cudart.cudaEventRecord(events['vae_encode-start'], 0)
+            mask, masked_image = prepare_mask_and_masked_image(image, mask_image)
+            mask, masked_image_latents, pose_inputs = self.prepare_mask_latents(
+                mask,
+                masked_image,
+                pose_inputs,
+                batch_size * self.num_images,
+                image_height,
+                image_width,
+                text_embeddings.dtype,
+                self.device,
+                generator,
+            )
+
+            cudart.cudaEventRecord(events['vae_encode-stop'], 0)
+            if self.nvtx_profile:
+                nvtx.end_range(nvtx_vae_encode)
 
             cudart.cudaEventRecord(events['denoise-start'], 0)
             for step_index, timestep in enumerate(self.scheduler.timesteps):
@@ -385,6 +454,7 @@ class DemoDiffusion:
                 latent_model_input = torch.cat([latents] * 2)
                 # LMSDiscreteScheduler.scale_model_input()
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, step_index)
+                latent_model_input = torch.cat([latent_model_input, mask, masked_image_latents, pose_inputs], dim=1)
                 if self.nvtx_profile:
                     nvtx.end_range(nvtx_latent_scale)
 
@@ -418,13 +488,13 @@ class DemoDiffusion:
             cudart.cudaEventRecord(events['denoise-stop'], 0)
 
             if self.nvtx_profile:
-                nvtx_vae = nvtx.start_range(message='vae', color='red')
-            cudart.cudaEventRecord(events['vae-start'], 0)
+                nvtx_vae_decode = nvtx.start_range(message='vae_decode', color='red')
+            cudart.cudaEventRecord(events['vae_decode-start'], 0)
             sample_inp = cuda.DeviceView(ptr=latents.data_ptr(), shape=latents.shape, dtype=np.float32)
-            images = self.runEngine('vae', {"latent": sample_inp})['images']
-            cudart.cudaEventRecord(events['vae-stop'], 0)
+            images = self.runEngine('vae_decode', {"latent": sample_inp})['images']
+            cudart.cudaEventRecord(events['vae_decode-stop'], 0)
             if self.nvtx_profile:
-                nvtx.end_range(nvtx_vae)
+                nvtx.end_range(nvtx_vae_decode)
 
             torch.cuda.synchronize()
             e2e_toc = time.perf_counter()
@@ -434,7 +504,8 @@ class DemoDiffusion:
                 print('|------------|--------------|')
                 print('| {:^10} | {:>9.2f} ms |'.format('CLIP', cudart.cudaEventElapsedTime(events['clip-start'], events['clip-stop'])[1]))
                 print('| {:^10} | {:>9.2f} ms |'.format('UNet x '+str(self.denoising_steps), cudart.cudaEventElapsedTime(events['denoise-start'], events['denoise-stop'])[1]))
-                print('| {:^10} | {:>9.2f} ms |'.format('VAE', cudart.cudaEventElapsedTime(events['vae-start'], events['vae-stop'])[1]))
+                print('| {:^10} | {:>9.2f} ms |'.format('VAE Encode', cudart.cudaEventElapsedTime(events['vae_encode-start'], events['vae_encode-stop'])[1]))
+                print('| {:^10} | {:>9.2f} ms |'.format('VAE Decode', cudart.cudaEventElapsedTime(events['vae_decode-start'], events['vae_decode-stop'])[1]))
                 print('|------------|--------------|')
                 print('| {:^10} | {:>9.2f} ms |'.format('Pipeline', (e2e_toc - e2e_tic)*1000.))
                 print('|------------|--------------|')
@@ -485,7 +556,9 @@ if __name__ == "__main__":
         hf_token=args.hf_token,
         verbose=args.verbose,
         nvtx_profile=args.nvtx_profile,
-        max_batch_size=max_batch_size)
+        max_batch_size=max_batch_size,
+        model_name_or_path=args.model_name_or_path
+        )
 
     # Load TensorRT engines and pytorch modules
     demo.loadEngines(args.engine_dir, args.onnx_dir, args.onnx_opset, 

@@ -655,12 +655,14 @@ class BaseModel():
         fp16=True,
         device='cuda',
         verbose=True,
-        max_batch_size=16
+        max_batch_size=16,
+        model_name_or_path="stabilityai/stable-diffusion-2-1-base"
     ):
         self.fp16 = fp16
         self.device = device
         self.verbose = verbose
         self.hf_token = hf_token
+        self.model_name_or_path = model_name_or_path
 
         # Defaults
         self.text_maxlen = text_maxlen
@@ -717,7 +719,7 @@ class BaseModel():
 class CLIP(BaseModel):
     def get_model(self):
         model_opts = {'revision': 'fp16', 'torch_dtype': torch.float16} if self.fp16 else {}
-        return CLIPTextModel.from_pretrained("stabilityai/stable-diffusion-2-1-base",
+        return CLIPTextModel.from_pretrained(self.model_name_or_path,
             subfolder="text_encoder",
             use_auth_token=self.hf_token,
             **model_opts).to(self.device)
@@ -786,7 +788,7 @@ class CLIP(BaseModel):
 class UNet(BaseModel):
     def get_model(self):
         model_opts = {'revision': 'fp16', 'torch_dtype': torch.float16} if self.fp16 else {}
-        return UNet2DConditionModel.from_pretrained("stabilityai/stable-diffusion-2-1-base",
+        return UNet2DConditionModel.from_pretrained(self.model_name_or_path,
             subfolder="unet",
             use_auth_token=self.hf_token,
             **model_opts).to(self.device)
@@ -809,23 +811,23 @@ class UNet(BaseModel):
         min_batch, max_batch, min_latent_height, max_latent_height, min_latent_width, max_latent_width = \
             self.get_minmax_dims(batch_size, image_height, image_width, static_batch, static_shape)
         return {
-            'sample': [(2*min_batch, 4, min_latent_height, min_latent_width), (2*batch_size, 4, latent_height, latent_width), (2*max_batch, 4, max_latent_height, max_latent_width)],
+            'sample': [(2*min_batch, 13, min_latent_height, min_latent_width), (2*batch_size, 13, latent_height, latent_width), (2*max_batch, 13, max_latent_height, max_latent_width)],
             'encoder_hidden_states': [(2*min_batch, self.text_maxlen, self.embedding_dim), (2*batch_size, self.text_maxlen, self.embedding_dim), (2*max_batch, self.text_maxlen, self.embedding_dim)]
         }
 
     def get_shape_dict(self, batch_size, image_height, image_width):
         latent_height, latent_width = self.check_dims(batch_size, image_height, image_width)
         return {
-            'sample': (2*batch_size, 4, latent_height, latent_width),
+            'sample': (2*batch_size, 13, latent_height, latent_width),
             'encoder_hidden_states': (2*batch_size, self.text_maxlen, self.embedding_dim),
-            'latent': (2*batch_size, 4, latent_height, latent_width)
+            'latent': (2*batch_size, 13, latent_height, latent_width)
         }
 
     def get_sample_input(self, batch_size, image_height, image_width):
         latent_height, latent_width = self.check_dims(batch_size, image_height, image_width)
         dtype = torch.float16 if self.fp16 else torch.float32
         return (
-            torch.randn(2*batch_size, 4, latent_height, latent_width, dtype=torch.float32, device=self.device),
+            torch.randn(2*batch_size, 13, latent_height, latent_width, dtype=torch.float32, device=self.device),
             torch.tensor([1.], dtype=torch.float32, device=self.device),
             torch.randn(2*batch_size, self.text_maxlen, self.embedding_dim, dtype=dtype, device=self.device)
         )
@@ -920,10 +922,10 @@ class UNet(BaseModel):
         opt.info('UNet: final')
         return onnx_opt_graph
 
-class VAE(BaseModel):
+class VAEDecode(BaseModel):
     def get_model(self):
         model_opts = {'revision': 'fp16', 'torch_dtype': torch.float16} if self.fp16 else {}
-        vae = AutoencoderKL.from_pretrained("stabilityai/stable-diffusion-2-1-base",
+        vae = AutoencoderKL.from_pretrained(self.model_name_or_path,
             subfolder="vae",
             use_auth_token=self.hf_token,
             **model_opts).to(self.device)
@@ -996,3 +998,49 @@ class VAE(BaseModel):
         onnx_opt_graph = opt.cleanup(return_onnx=True)
         opt.info('VAE: final')
         return onnx_opt_graph
+
+
+class VAEEncode(VAEDecode):
+    def get_model(self):
+        model_opts = {'revision': 'fp16', 'torch_dtype': torch.float16} if self.fp16 else {}
+        vae = AutoencoderKL.from_pretrained(self.model_name_or_path,
+            subfolder="vae",
+            use_auth_token=self.hf_token,
+            **model_opts).to(self.device)
+        def get_func(self):
+            def encode_image(x, **kwargs):
+                posterior = self.encode(x, **kwargs).latent_dist
+                return posterior.sample()
+            return encode_image
+        vae.forward = get_func(vae)
+        return vae
+
+    def get_input_names(self):
+        return ['images']
+
+    def get_output_names(self):
+        return ['latent']
+
+    def get_dynamic_axes(self):
+        return {
+            'images': {0: 'B', 2: '8H', 3: '8W'},
+            'latent': {0: 'B', 2: 'H', 3: 'W'}
+        }
+
+    def get_input_profile(self, batch_size, image_height, image_width, static_batch, static_shape):
+        latent_height, latent_width = self.check_dims(batch_size, image_height, image_width)
+        min_batch, max_batch, min_latent_height, max_latent_height, min_latent_width, max_latent_width = \
+            self.get_minmax_dims(batch_size, image_height, image_width, static_batch, static_shape)
+        return {
+            'images': [(min_batch, 3, min_latent_height*8, min_latent_width*8), (batch_size, 3, latent_height*8, latent_width*8), (max_batch, 3, max_latent_height*8, max_latent_width*8)]
+        }
+
+    def get_shape_dict(self, batch_size, image_height, image_width):
+        latent_height, latent_width = self.check_dims(batch_size, image_height, image_width)
+        return {
+            'images': (batch_size, 3, image_height, image_width),
+            'latent': (batch_size, 4, latent_height, latent_width)
+        }
+
+    def get_sample_input(self, batch_size, image_height, image_width):
+        return torch.randn(batch_size, 3, image_height, image_width, dtype=torch.float32, device=self.device)

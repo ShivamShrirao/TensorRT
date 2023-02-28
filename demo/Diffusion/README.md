@@ -91,7 +91,7 @@ export HF_TOKEN=<your access token>
 ### Generate an image guided by a single text prompt
 
 ```bash
-LD_PRELOAD=${PLUGIN_LIBS} python3 demo-diffusion.py --build-dynamic-shape --build-preview-features "a beautiful photograph of Mt. Fuji during cherry blossom" --hf-token=$HF_TOKEN -v
+LD_PRELOAD=${PLUGIN_LIBS} python3 demo-diffusion.py --build-dynamic-shape --build-preview-features "a beautiful photograph of Mt. Fuji during cherry blossom" --hf-token=$HF_TOKEN -v --model_name_or_path="src/weights-66000"
 ```
 
 # Restrictions

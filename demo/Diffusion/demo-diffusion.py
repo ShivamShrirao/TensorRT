@@ -29,6 +29,7 @@ from cuda import cudart
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_inpaint import \
     prepare_mask_and_masked_image
 from models import CLIP, UNet, VAEDecode, VAEEncode
+from PIL import Image
 from polygraphy import cuda
 from transformers import CLIPTokenizer
 from utilities import (TRT_LOGGER, DPMScheduler, Engine, LMSDiscreteScheduler,
@@ -285,10 +286,10 @@ class DemoDiffusion:
         # we do that before converting to dtype to avoid breaking in case we're using cpu_offload
         # and half precision
         mask = torch.nn.functional.interpolate(
-            mask, size=(height // self.vae_scale_factor, width // self.vae_scale_factor), mode='area'
+            mask, size=(height // 8, width // 8), mode='area'
         )
         pose_inputs = torch.nn.functional.interpolate(
-            pose_inputs, size=(height // self.vae_scale_factor, width // self.vae_scale_factor)
+            pose_inputs, size=(height // 8, width // 8)
         )
 
         mask = mask.to(device=device, dtype=dtype)
@@ -480,6 +481,9 @@ class DemoDiffusion:
                 noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
 
                 latents = self.scheduler.step(noise_pred, latents, step_index, timestep)
+                img = 255 * (latents - latents.min()) / (latents.max() - latents.min())
+                img = img[:,:3].permute(0, 2, 3, 1).type(torch.uint8).cpu().numpy()
+                Image.fromarray(img[0]).save(f'output/l.png')
 
                 if self.nvtx_profile:
                     nvtx.end_range(nvtx_latent_step)
@@ -570,13 +574,35 @@ if __name__ == "__main__":
     demo.loadModules()
 
     print("[I] Warming up ..")
+    image = Image.new("RGB", (image_width, image_height), color=(0, 0, 0))
+    mask_image = Image.new("L", (image_width, image_height), color=255)
+    pose_inputs = torch.zeros((1, 4, image_height, image_width), dtype=torch.float32)
     for _ in range(args.num_warmup_runs):
-        images = demo.infer(prompt, negative_prompt, image_height, image_width, warmup=True, verbose=False)
+        images = demo.infer(
+            prompt,
+            negative_prompt,
+            image,
+            mask_image,
+            pose_inputs,
+            image_height,
+            image_width,
+            warmup=True,
+            verbose=False
+        )
 
     print("[I] Running StableDiffusion pipeline")
     if args.nvtx_profile:
         cudart.cudaProfilerStart()
-    images = demo.infer(prompt, negative_prompt, image_height, image_width, verbose=args.verbose)
+    images = demo.infer(
+        prompt,
+        negative_prompt,
+        image,
+        mask_image,
+        pose_inputs,
+        image_height,
+        image_width,
+        verbose=args.verbose
+    )
     if args.nvtx_profile:
         cudart.cudaProfilerStop()
 

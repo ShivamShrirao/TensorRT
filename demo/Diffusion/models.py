@@ -626,7 +626,6 @@ class Optimizer():
                 assert num_dynamic_q == num_dynamic_kv
                 weights_k = node_k.inputs[1].values
                 heads = weights_k.shape[1] // dim_heads
-                print(heads)
                 # Fuse Q, K and V GEMMS
                 node_qkv = self.fuse_qkv(node_q, node_k, node_v, mha_index, heads, num_dynamic_kv)
                 # Insert fMHA plugin
@@ -820,7 +819,7 @@ class UNet(BaseModel):
         return {
             'sample': (2*batch_size, 13, latent_height, latent_width),
             'encoder_hidden_states': (2*batch_size, self.text_maxlen, self.embedding_dim),
-            'latent': (2*batch_size, 13, latent_height, latent_width)
+            'latent': (2*batch_size, 4, latent_height, latent_width)
         }
 
     def get_sample_input(self, batch_size, image_height, image_width):

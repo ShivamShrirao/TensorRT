@@ -438,7 +438,7 @@ class DemoDiffusion:
                 batch_size * self.num_images,
                 image_height,
                 image_width,
-                text_embeddings.dtype,
+                latents.dtype,
                 self.device,
                 generator,
             )
@@ -481,9 +481,6 @@ class DemoDiffusion:
                 noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
 
                 latents = self.scheduler.step(noise_pred, latents, step_index, timestep)
-                img = 255 * (latents - latents.min()) / (latents.max() - latents.min())
-                img = img[:,:3].permute(0, 2, 3, 1).type(torch.uint8).cpu().numpy()
-                Image.fromarray(img[0]).save(f'output/l.png')
 
                 if self.nvtx_profile:
                     nvtx.end_range(nvtx_latent_step)

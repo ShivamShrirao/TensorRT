@@ -1,6 +1,6 @@
 __pycache__/
-onnx/*.onnx
-engine/*.plan
+*.onnx
+*.plan
 output/*.png
 *.log
 src/

@@ -1,0 +1,18 @@
+name: "text_encoder"
+platform: "tensorrt_plan"
+default_model_filename: "clip.plan"
+max_batch_size : 0
+input [
+  {
+    name: "input_ids"
+    data_type: TYPE_INT32
+    dims: [ -1, 77]
+  }
+]
+output [
+  {
+    name: "text_embeddings"
+    data_type: TYPE_FP32
+    dims: [ -1, 77, 1024 ]
+  }
+]

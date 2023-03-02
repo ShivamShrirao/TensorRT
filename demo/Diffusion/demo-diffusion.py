@@ -532,7 +532,7 @@ if __name__ == "__main__":
     else:
         negative_prompt = args.negative_prompt
 
-    max_batch_size = 8
+    max_batch_size = 16
     if args.build_dynamic_shape:
         max_batch_size = 4
 
@@ -571,9 +571,10 @@ if __name__ == "__main__":
     demo.loadModules()
 
     print("[I] Warming up ..")
-    image = Image.new("RGB", (image_width, image_height), color=(0, 0, 0))
-    mask_image = Image.new("L", (image_width, image_height), color=255)
-    pose_inputs = torch.zeros((1, 4, image_height, image_width), dtype=torch.float32)
+    batch_size = len(prompt)
+    image = [Image.new("RGB", (args.width, args.height), color=(0, 0, 0))] * batch_size
+    mask_image = [Image.new("L", (args.width, args.height), color=255)] * batch_size
+    pose_inputs = torch.zeros((batch_size, 4, args.height, args.width), dtype=torch.float32)
     for _ in range(args.num_warmup_runs):
         images = demo.infer(
             prompt,

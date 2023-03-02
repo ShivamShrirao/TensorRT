@@ -515,9 +515,9 @@ if __name__ == "__main__":
     if args.seed is not None:
         generator = torch.Generator().manual_seed(args.seed)
 
-    image = Image.new("RGB", (args.width, args.height), color=(0, 0, 0))
-    mask_image = Image.new("L", (args.width, args.height), color=255)
-    pose_inputs = torch.zeros((1, 4, args.height, args.width), dtype=torch.float32)
+    image = [Image.new("RGB", (args.width, args.height), color=(0, 0, 0))] * batch_size
+    mask_image = [Image.new("L", (args.width, args.height), color=255)] * batch_size
+    pose_inputs = torch.zeros((batch_size, 4, args.height, args.width), dtype=torch.float32)
 
 
     pipeline.loadEngines(['clip', 'unet_fp16'])
@@ -537,7 +537,8 @@ if __name__ == "__main__":
             generator=generator,
         )
     print("Inference time: ", time.time() - start_time)
-    Image.fromarray((255 * images[0]).astype(np.uint8)).save("output/out.png")
+    for i, img in enumerate(images):
+        Image.fromarray((255 * img).astype(np.uint8)).save(f"output/out_{i}.png")
     pipeline.unloadEngines(['clip', 'unet_fp16'])
 
 
@@ -561,5 +562,6 @@ if __name__ == "__main__":
         )
     print("Inference time: ", time.time() - start_time)
 
-    Image.fromarray((255 * images[0]).astype(np.uint8)).save("output/out1.png")
+    for i, img in enumerate(images):
+        Image.fromarray((255 * img).astype(np.uint8)).save(f"output/out1_{i}.png")
     pipeline.teardown()

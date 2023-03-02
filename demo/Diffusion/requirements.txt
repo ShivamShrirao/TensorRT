@@ -1,6 +1,6 @@
 colored
 cuda-python
-git+https://github.com/huggingface/diffusers.git#egg=diffusers
+diffusers
 ftfy
 matplotlib
 nvtx

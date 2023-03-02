@@ -16,5 +16,5 @@ export HF_TOKEN=<your access token>
 ### Generate an image guided by a single text prompt
 
 ```bash
-LD_PRELOAD=${PLUGIN_LIBS} python3 demo-diffusion.py --build-preview-features "a beautiful photograph of Mt. Fuji during cherry blossom" -v --model_name_or_path="src/weights-66000" --hf-token=$HF_TOKEN
+LD_PRELOAD=${PLUGIN_LIBS} python3 demo-diffusion.py "a beautiful photograph of Mt. Fuji during cherry blossom" -v --model_name_or_path="src/weights-66000" --build-preview-features --hf-token=$HF_TOKEN
 ```

@@ -32,7 +32,7 @@ def parseArgs():
     parser.add_argument('--negative-prompt', nargs='*',
                         default=[''], help="The negative prompt(s) to guide the image generation.")
     parser.add_argument('--repeat-prompt', type=int, default=1,
-                        choices=[1, 2, 4, 8, 16], help="Number of times to repeat the prompt (batch size multiplier)")
+                        help="Number of times to repeat the prompt (batch size multiplier)")
     parser.add_argument('--height', type=int, default=768, help="Height of image to generate (must be multiple of 8)")
     parser.add_argument('--width', type=int, default=768, help="Height of image to generate (must be multiple of 8)")
     parser.add_argument('--num_inference_steps', type=int, default=24, help="Number of denoising steps")
@@ -499,6 +499,7 @@ if __name__ == "__main__":
     pipeline = TRTStableDiffusionInpaintPosePipeline(
         tokenizer=tokenizer,
         scheduler=scheduler,
+        engine_dir=args.engine_dir,
     )
 
     pipeline.models['unet_fp16_2'] = UNet(f'{args.engine_dir}/unet_fp16.plan')

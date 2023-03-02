@@ -532,7 +532,7 @@ if __name__ == "__main__":
     else:
         negative_prompt = args.negative_prompt
 
-    max_batch_size = 16
+    max_batch_size = 4
     if args.build_dynamic_shape:
         max_batch_size = 4
 

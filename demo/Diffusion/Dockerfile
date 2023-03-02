@@ -5,7 +5,7 @@ RUN pip install --upgrade pip
 RUN pip install --no-cache-dir --upgrade tensorrt
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade -r requirements.txt
+RUN pip install --no-cache-dir -U -r requirements.txt
 
 WORKDIR /workspace
 

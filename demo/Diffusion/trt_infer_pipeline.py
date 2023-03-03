@@ -80,6 +80,7 @@ class Engine():
         self.context = self.engine.create_execution_context()
 
     def allocate_buffers(self, shape_dict=None, device='cuda'):
+        [buf.free() for buf in self.buffers.values() if isinstance(buf, cuda.DeviceArray)]
         for idx in range(trt_util.get_bindings_per_profile(self.engine)):
             binding = self.engine[idx]
             if shape_dict and binding in shape_dict:
@@ -184,13 +185,9 @@ class TRTStableDiffusionInpaintPosePipeline:
         self.scheduler = scheduler
 
         self.models = {
-            'clip': CLIP(f'{engine_dir}/clip.plan'),
-            'unet_fp16': UNet(f'{engine_dir}/unet_fp16.plan'),
             'vae_encode': VAEEncode(f'{engine_dir}/vae_encode.plan'),
             'vae_decode': VAEDecode(f'{engine_dir}/vae_decode.plan'),
         }
-        self.unet_model_key = 'unet_fp16'
-        self.clip_model_key = 'clip'
         self.stream = cuda.Stream()
     
     def loadEngines(self, keys: List[str] = None):
@@ -220,7 +217,7 @@ class TRTStableDiffusionInpaintPosePipeline:
                 device=self.device
             )
             print(f"Allocated buffers for {key} engine in {time.time() - start_time:.3f} seconds")
-
+    
     def teardown(self):
         for engine in self.models.values():
             del engine
@@ -257,6 +254,7 @@ class TRTStableDiffusionInpaintPosePipeline:
         negative_prompt=None,
         prompt_embeds: Optional[torch.FloatTensor] = None,
         negative_prompt_embeds: Optional[torch.FloatTensor] = None,
+        clip_model_key: str = 'clip',
     ):
         if prompt is not None and isinstance(prompt, str):
             batch_size = 1
@@ -277,7 +275,7 @@ class TRTStableDiffusionInpaintPosePipeline:
 
             text_input_ids_inp = cuda.DeviceView(ptr=text_input_ids.data_ptr(),
                                                  shape=text_input_ids.shape, dtype=np.int32)
-            prompt_embeds = self.runEngine(self.clip_model_key, {"input_ids": text_input_ids_inp})['text_embeddings']
+            prompt_embeds = self.runEngine(clip_model_key, {"input_ids": text_input_ids_inp})['text_embeddings']
 
         bs_embed, seq_len, _ = prompt_embeds.shape
         # duplicate text embeddings for each generation per prompt, using mps friendly method
@@ -316,7 +314,7 @@ class TRTStableDiffusionInpaintPosePipeline:
 
             uncond_input_ids_inp = cuda.DeviceView(ptr=uncond_input_ids.data_ptr(),
                                                    shape=uncond_input_ids.shape, dtype=np.int32)
-            negative_prompt_embeds = self.runEngine(self.clip_model_key, {"input_ids": uncond_input_ids_inp})['text_embeddings']
+            negative_prompt_embeds = self.runEngine(clip_model_key, {"input_ids": uncond_input_ids_inp})['text_embeddings']
 
         if do_classifier_free_guidance:
             # duplicate unconditional embeddings for each generation per prompt, using mps friendly method
@@ -385,6 +383,8 @@ class TRTStableDiffusionInpaintPosePipeline:
         num_images_per_prompt: Optional[int] = 1,
         eta: float = 0.0,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
+        unet_model_key: str = 'unet_fp16',
+        clip_model_key: str = 'clip',
     ):
         # 0. Default height and width to unet
         height = height
@@ -399,7 +399,7 @@ class TRTStableDiffusionInpaintPosePipeline:
 
         # 3. Encode input prompt
         text_embeddings = self._encode_prompt(
-            prompt, self.device, num_images_per_prompt, do_classifier_free_guidance, negative_prompt
+            prompt, self.device, num_images_per_prompt, do_classifier_free_guidance, negative_prompt, clip_model_key=clip_model_key
         )
 
         # 4. Preprocess mask and image
@@ -450,7 +450,7 @@ class TRTStableDiffusionInpaintPosePipeline:
             timestep_inp = cuda.DeviceView(ptr=timestep_float.data_ptr(), shape=timestep_float.shape, dtype=np.float32)
             embeddings_inp = cuda.DeviceView(ptr=text_embeddings.data_ptr(), shape=text_embeddings.shape, dtype=dtype)
             noise_pred = self.runEngine(
-                self.unet_model_key, {"sample": sample_inp, "timestep": timestep_inp, "encoder_hidden_states": embeddings_inp})['latent']
+                unet_model_key, {"sample": sample_inp, "timestep": timestep_inp, "encoder_hidden_states": embeddings_inp})['latent']
 
             # perform guidance
             if do_classifier_free_guidance:
@@ -502,15 +502,13 @@ if __name__ == "__main__":
         engine_dir=args.engine_dir,
     )
 
+    pipeline.models['unet_fp16'] = UNet(f'{args.engine_dir}/unet_fp16.plan')
+    pipeline.models['clip'] = CLIP(f'{args.engine_dir}/clip.plan')
     pipeline.models['unet_fp16_2'] = UNet(f'{args.engine_dir}/unet_fp16.plan')
     pipeline.models['clip_2'] = CLIP(f'{args.engine_dir}/clip.plan')
 
-    pipeline.unet_model_key = 'unet_fp16'
-    pipeline.clip_model_key = 'clip'
-
     batch_size = len(prompt)
     pipeline.loadEngines(['vae_encode', 'vae_decode'])
-    pipeline.allocateBuffers(batch_size, args.height, args.width, ['vae_encode', 'vae_decode'])
 
     generator = None
     if args.seed is not None:
@@ -519,7 +517,7 @@ if __name__ == "__main__":
     image = [Image.new("RGB", (args.width, args.height), color=(0, 0, 0))] * batch_size
     mask_image = [Image.new("L", (args.width, args.height), color=255)] * batch_size
     pose_inputs = torch.zeros((batch_size, 4, args.height, args.width), dtype=torch.float32)
-
+    pipeline.allocateBuffers(batch_size, args.height, args.width, ['vae_encode', 'vae_decode'])
 
     pipeline.loadEngines(['clip', 'unet_fp16'])
     pipeline.allocateBuffers(batch_size, args.height, args.width, ['clip', 'unet_fp16'])
@@ -536,6 +534,8 @@ if __name__ == "__main__":
             guidance_scale=7.5,
             negative_prompt=negative_prompt,
             generator=generator,
+            unet_model_key='unet_fp16',
+            clip_model_key='clip',
         )
     print("Inference time: ", time.time() - start_time)
     for i, img in enumerate(images):
@@ -545,8 +545,6 @@ if __name__ == "__main__":
 
     pipeline.loadEngines(['clip_2', 'unet_fp16_2'])
     pipeline.allocateBuffers(batch_size, args.height, args.width, ['clip_2', 'unet_fp16_2'])
-    pipeline.clip_model_key = 'clip_2'
-    pipeline.unet_model_key = 'unet_fp16_2'
     for i in range(2):
         start_time = time.time()
         images = pipeline(
@@ -560,6 +558,8 @@ if __name__ == "__main__":
             guidance_scale=7.5,
             negative_prompt=negative_prompt,
             generator=generator,
+            unet_model_key='unet_fp16_2',
+            clip_model_key='clip_2',
         )
     print("Inference time: ", time.time() - start_time)
 

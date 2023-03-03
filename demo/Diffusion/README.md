@@ -2,6 +2,7 @@
 
 ```bash
 git submodule update --init --recursive
+cd demo/Diffusion
 docker build -t tensorrt .
 docker run -it --rm --gpus=all -v $PWD/../../:/workspace tensorrt /bin/bash
 . ./demo/Diffusion/build_plugin.sh

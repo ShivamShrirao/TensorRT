@@ -172,7 +172,7 @@ class TRTStableDiffusionInpaintPosePipeline:
     def __init__(
         self,
         tokenizer: CLIPTokenizer,
-        scheduler: EulerAncestralDiscreteScheduler,
+        scheduler: UniPCMultistepScheduler,
         engine_dir: str ='engine',
         device: str ='cuda',
     ):

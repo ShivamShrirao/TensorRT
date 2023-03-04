@@ -294,7 +294,7 @@ class DemoDiffusion:
 
         mask = mask.to(device=device, dtype=dtype)
         pose_inputs = pose_inputs.to(device=device, dtype=dtype)
-        masked_image = masked_image.to(device=device, dtype=dtype)
+        masked_image = masked_image.to(device=device, dtype=dtype).contiguous()
 
         # encode the mask image into latents space so we can concatenate it to the latents
         sample_inp = cuda.DeviceView(ptr=masked_image.data_ptr(), shape=masked_image.shape, dtype=np.float32)
@@ -572,9 +572,17 @@ if __name__ == "__main__":
 
     print("[I] Warming up ..")
     batch_size = len(prompt)
-    image = [Image.new("RGB", (args.width, args.height), color=(0, 0, 0))] * batch_size
-    mask_image = [Image.new("L", (args.width, args.height), color=255)] * batch_size
-    pose_inputs = torch.zeros((batch_size, 4, args.height, args.width), dtype=torch.float32)
+    # image = [Image.new("RGB", (args.width, args.height), color=(0, 0, 0))] * batch_size
+    # mask_image = [Image.new("L", (args.width, args.height), color=255)] * batch_size
+    # pose_inputs = torch.zeros((batch_size, 4, args.height, args.width), dtype=torch.float32)
+
+    image = [Image.open("src/__dump__/init_image.png").resize((args.width, args.height))] * batch_size
+    mask_image = [Image.open("src/__dump__/mask.png").resize((args.width, args.height))] * batch_size
+    dp_segm = np.array(Image.open("src/__dump__/dp_segm.png").resize((args.width, args.height)))[None]
+    op_skeleton = np.array(Image.open("src/__dump__/op_skeleton.png").resize((args.width, args.height))).transpose(2,0,1)
+    pose_inputs = np.concatenate([dp_segm, op_skeleton]).astype(np.float32)[None] / 255.0
+    pose_inputs = torch.from_numpy(pose_inputs).cuda().float().repeat(batch_size, 1, 1, 1)
+
     for _ in range(args.num_warmup_runs):
         images = demo.infer(
             prompt,

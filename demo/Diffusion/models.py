@@ -94,7 +94,7 @@ def get_path(version, inpaint=False):
     elif version == "2.1-base":
         return "stabilityai/stable-diffusion-2-1-base"
     else:
-        raise ValueError(f"Incorrect version {version}")
+        return version
 
 def get_embedding_dim(version):
     if version in ("1.4", "1.5"):
@@ -321,8 +321,12 @@ class UNet(BaseModel):
         )
 
 def make_UNet(version, hf_token, device, verbose, max_batch_size, inpaint=False):
+    if isinstance(inpaint, bool):
+        unet_dim = 9 if inpaint else 4
+    else:
+        unet_dim = inpaint
     return UNet(hf_token=hf_token, fp16=True, device=device, verbose=verbose, path=get_path(version, inpaint=inpaint),
-            max_batch_size=max_batch_size, embedding_dim=get_embedding_dim(version), unet_dim=(9 if inpaint else 4))
+            max_batch_size=max_batch_size, embedding_dim=get_embedding_dim(version), unet_dim=unet_dim)
 
 class VAE(BaseModel):
     def __init__(self,

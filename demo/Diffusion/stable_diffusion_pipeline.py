@@ -170,7 +170,7 @@ class StableDiffusionPipeline:
         self.pipeline_type = pipeline_type
         if self.pipeline_type.is_txt2img() or self.pipeline_type.is_controlnet():
             self.stages = ['clip','unet','vae']
-        elif self.pipeline_type.is_img2img() or self.pipeline_type.is_inpaint():
+        elif self.pipeline_type.is_img2img() or self.pipeline_type.is_inpaint() or self.pipeline_type.is_inpaint_pose():
             self.stages = ['vae_encoder', 'clip','unet','vae']
         elif self.pipeline_type.is_sd_xl_base():
             self.stages = ['clip', 'clip2', 'unetxl']
@@ -768,7 +768,7 @@ class StableDiffusionPipeline:
                 denoise_kwargs.update({'controlnet_imgs': input_image, 'controlnet_scales': controlnet_scales})
 
             # Pre-process and VAE encode input image
-            if self.pipeline_type.is_img2img() or self.pipeline_type.is_inpaint() or self.pipeline_type.is_sd_xl_refiner():
+            if self.pipeline_type.is_img2img() or self.pipeline_type.is_inpaint() or self.pipeline_type.is_inpaint_pose() or self.pipeline_type.is_sd_xl_refiner():
                 assert input_image != None
                 # Initialize timesteps and pre-process input image
                 timesteps, t_start = self.initialize_timesteps(self.denoising_steps, image_strength)
@@ -787,6 +787,8 @@ class StableDiffusionPipeline:
                 mask = torch.cat([mask] * 2)
                 masked_image_latents = self.encode_image(mask_image)
                 masked_image_latents = torch.cat([masked_image_latents] * 2)
+                if self.pipeline_type.is_inpaint_pose():
+                    masked_image_latents = torch.cat([masked_image_latents, torch.zeros_like(masked_image_latents)], dim=1)
                 denoise_kwargs.update({'mask': mask, 'masked_image_latents': masked_image_latents})
 
             # CLIP text encoder(s)

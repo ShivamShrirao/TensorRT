@@ -78,6 +78,7 @@ class PIPELINE_TYPE(Enum):
     TXT2IMG = auto()
     IMG2IMG = auto()
     INPAINT = auto()
+    INPAINT_POSE = auto()
     CONTROLNET = auto()
     XL_BASE = auto()
     XL_REFINER = auto()
@@ -90,6 +91,9 @@ class PIPELINE_TYPE(Enum):
 
     def is_inpaint(self):
         return self == self.INPAINT
+
+    def is_inpaint_pose(self):
+        return self == self.INPAINT_POSE
 
     def is_controlnet(self):
         return self == self.CONTROLNET
@@ -1641,7 +1645,7 @@ def download_image(url):
 
 def add_arguments(parser):
     # Stable Diffusion configuration
-    parser.add_argument('--version', type=str, default="1.5", choices=["1.4", "1.5", "2.0-base", "2.0", "2.1-base", "2.1", "xl-1.0"], help="Version of Stable Diffusion")
+    parser.add_argument('--version', type=str, default="1.5", help="Version of Stable Diffusion")
     parser.add_argument('prompt', nargs = '*', help="Text prompt(s) to guide image generation")
     parser.add_argument('--negative-prompt', nargs = '*', default=[''], help="The negative prompt(s) to guide the image generation.")
     parser.add_argument('--batch-size', type=int, default=1, choices=[1, 2, 4], help="Batch size (repeat prompt)")

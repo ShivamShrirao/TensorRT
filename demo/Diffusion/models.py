@@ -114,7 +114,6 @@ def get_controlnets_path(controlnet_list):
     return ["lllyasviel/sd-controlnet-" + controlnet for controlnet in controlnet_list]
 
 def get_path(version, pipeline, controlnet=None):
-
     if controlnet is not None:
         return ["lllyasviel/sd-controlnet-" + modality for modality in controlnet]
     
@@ -150,7 +149,7 @@ def get_path(version, pipeline, controlnet=None):
         else:
             raise ValueError(f"Unsupported SDXL 1.0 pipeline {pipeline.name}")
     else:
-        raise ValueError(f"Incorrect version {version}")
+        return version
 
 def get_clip_embedding_dim(version, pipeline):
     if version in ("1.4", "1.5"):
@@ -160,7 +159,7 @@ def get_clip_embedding_dim(version, pipeline):
     elif version in ("xl-1.0") and pipeline.is_sd_xl_base():
         return 768
     else:
-        raise ValueError(f"Invalid version {version} + pipeline {pipeline}")
+        return 1024
 
 def get_clipwithproj_embedding_dim(version, pipeline):
     if version in ("xl-1.0"):
@@ -178,7 +177,7 @@ def get_unet_embedding_dim(version, pipeline):
     elif version in ("xl-1.0") and pipeline.is_sd_xl_refiner():
         return 1280
     else:
-        raise ValueError(f"Invalid version {version} + pipeline {pipeline}")
+        return 1024
 
 def fuse_lora_weights(model, lora_weights, lora_scale):
     if not lora_weights or lora_weights == "":
@@ -650,8 +649,14 @@ class UNet(BaseModel):
             )
 
 def make_UNet(version, pipeline, hf_token, device, verbose, max_batch_size, controlnet=None, lora_weights=None, lora_scale=1):
+    if pipeline.is_inpaint():
+        unet_dim = 9
+    elif pipeline.is_inpaint_pose():
+        unet_dim = 13
+    else:
+        unet_dim = 4
     return UNet(version, pipeline, hf_token, fp16=True, device=device, verbose=verbose,
-            max_batch_size=max_batch_size, unet_dim=(9 if pipeline.is_inpaint() else 4),
+            max_batch_size=max_batch_size, unet_dim=unet_dim,
             controlnet=get_controlnets_path(controlnet), lora_weights=lora_weights,
             lora_scale=lora_scale)
 

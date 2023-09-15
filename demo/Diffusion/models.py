@@ -261,7 +261,7 @@ class BaseModel():
         self.pipeline = pipeline.name
         self.version = version
         self.hf_token = hf_token
-        self.hf_safetensor = pipeline.is_sd_xl()
+        self.hf_safetensor = True #pipeline.is_sd_xl()
         self.device = device
         self.verbose = verbose
         self.path = get_path(version, pipeline, controlnet)
@@ -533,7 +533,7 @@ class UNet(BaseModel):
         self.lora_scale=lora_scale
 
     def get_model(self, framework_model_dir, torch_inference=''):
-        model_opts = {'variant': 'fp16', 'torch_dtype': torch.float16} if self.fp16 else {}
+        model_opts = {'torch_dtype': torch.float16} if self.fp16 else {}
         if self.controlnet:
             unet_model = UNet2DConditionModel.from_pretrained(self.path,
                 subfolder=self.subfolder,
@@ -683,7 +683,7 @@ class UNetXL(BaseModel):
         self.lora_scale=lora_scale
 
     def get_model(self, framework_model_dir, torch_inference=''):
-        model_opts = {'variant': 'fp16', 'torch_dtype': torch.float16} if self.fp16 else {}
+        model_opts = {'torch_dtype': torch.float16} if self.fp16 else {}
         unet_model_dir = get_checkpoint_dir(framework_model_dir, self.version, self.pipeline, self.subfolder, torch_inference)
         if not os.path.exists(unet_model_dir):
             model = UNet2DConditionModel.from_pretrained(self.path,

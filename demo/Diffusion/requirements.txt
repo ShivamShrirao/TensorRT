@@ -7,7 +7,7 @@ ftfy
 matplotlib
 nvtx
 onnx==1.14.0
-onnxruntime==1.15.1
+onnxruntime-gpu==1.15.1
 opencv-python==4.8.0.74
 scipy
 transformers==4.31.0

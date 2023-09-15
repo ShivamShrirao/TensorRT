@@ -59,6 +59,8 @@ if __name__ == "__main__":
         print(f"[I] Resizing mask_image to {args.height}x{args.width}")
         mask_image = mask_image.resize((args.height, args.width))
         mask_height, mask_width = args.height, args.width
+    
+    mask_image = Image.new("L", mask_image.size, 255)
 
     kwargs_init_pipeline, kwargs_load_engine, args_run_demo = process_pipeline_args(args)
 

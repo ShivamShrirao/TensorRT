@@ -781,7 +781,7 @@ class StableDiffusionPipeline:
                 # Add noise to latents using timesteps
                 noise = torch.randn(image_latents.shape, generator=self.generator, device=self.device, dtype=torch.float32)
                 latents = self.scheduler.add_noise(image_latents, noise, t_start, latent_timestep)
-            elif self.pipeline_type.is_inpaint():
+            elif self.pipeline_type.is_inpaint() or self.pipeline_type.is_inpaint_pose():
                 mask, mask_image = self.preprocess_images(batch_size, prepare_mask_and_masked_image(input_image, mask_image))
                 mask = torch.nn.functional.interpolate(mask, size=(latent_height, latent_width))
                 mask = torch.cat([mask] * 2)

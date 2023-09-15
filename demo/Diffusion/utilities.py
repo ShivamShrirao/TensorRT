@@ -1652,7 +1652,7 @@ def add_arguments(parser):
     parser.add_argument('--batch-count', type=int, default=1, help="Number of images to generate in sequence, one at a time.")
     parser.add_argument('--height', type=int, default=512, help="Height of image to generate (must be multiple of 8)")
     parser.add_argument('--width', type=int, default=512, help="Height of image to generate (must be multiple of 8)")
-    parser.add_argument('--denoising-steps', type=int, default=50, help="Number of denoising steps")
+    parser.add_argument('--denoising-steps', type=int, default=20, help="Number of denoising steps")
     parser.add_argument('--scheduler', type=str, default="DDIM", choices=["DDIM", "DPM", "EulerA", "LMSD", "PNDM"], help="Scheduler for diffusion process")
     parser.add_argument('--guidance_scale', type=float, default=7.5, help="Value of classifier-free guidance scale (must be greater than 1)")
     parser.add_argument('--lora-scale', type=float, default=1, help="Scale of LoRA weights, default 1 (must between 0 and 1)")

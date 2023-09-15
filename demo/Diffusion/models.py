@@ -102,7 +102,7 @@ def get_embedding_dim(version):
     elif version in ("2.0", "2.0-base", "2.1", "2.1-base"):
         return 1024
     else:
-        raise ValueError(f"Incorrect version {version}")
+        return 1024
 
 class BaseModel():
     def __init__(

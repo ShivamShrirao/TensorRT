@@ -28,7 +28,6 @@ def parseArgs():
     parser.add_argument('--scheduler', type=str, default="PNDM", choices=["PNDM"], help="Scheduler for diffusion process")
     parser.add_argument('--input-image', type=str, default="", help="Path to the input image")
     parser.add_argument('--mask-image', type=str, default="", help="Path to the mask image")
-    parser.add_argument('--model_name_or_path', type=str, default=None, help="Path to the model weights")
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -58,6 +57,10 @@ if __name__ == "__main__":
     else:
         mask_url = "https://raw.githubusercontent.com/CompVis/latent-diffusion/main/data/inpainting_examples/overture-creations-5sI6fQgYIuo_mask.png"
         mask_image = download_image(mask_url)
+    
+    input_image = input_image.resize((args.width, args.height))
+    mask_image = mask_image.resize((args.width, args.height))
+    mask_image = Image.new("L", mask_image.size, 255)
 
     image_width, image_height = input_image.size
     mask_width, mask_height = mask_image.size

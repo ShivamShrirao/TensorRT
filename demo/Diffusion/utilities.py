@@ -286,7 +286,7 @@ class Engine():
             dtype = trt.nptype(self.engine.get_binding_dtype(binding))
             if self.engine.binding_is_input(binding):
                 self.context.set_binding_shape(idx, shape)
-            tensor = torch.empty(tuple(shape), dtype=numpy_to_torch_dtype_dict[dtype]).to(device=device)
+            tensor = torch.empty(tuple(shape), dtype=numpy_to_torch_dtype_dict[dtype], device=device)
             self.tensors[binding] = tensor
 
     def infer(self, feed_dict, stream, use_cuda_graph=False):
